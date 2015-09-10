@@ -168,13 +168,6 @@ t_wav_file_hdr wave_file_hdr =
 	}
 };
 
-typedef enum {
-	TRANSCEIVER_MODE_OFF = 0,
-	TRANSCEIVER_MODE_RX = 1,
-	TRANSCEIVER_MODE_TX = 2,
-	TRANSCEIVER_MODE_SS = 3
-
-} transceiver_mode_t;
 static transceiver_mode_t transceiver_mode = TRANSCEIVER_MODE_RX;
 
 #define U64TOA_MAX_DIGIT (31)
@@ -300,7 +293,7 @@ FILE* fd = NULL;
 volatile uint32_t byte_count = 0;
 
 bool signalsource = false;
-uint32_t power_level = 1;
+uint32_t amplitude = 0;
 
 bool receive = false;
 bool receive_wav = false;
@@ -336,6 +329,8 @@ size_t bytes_to_xfer = 0;
 
 bool baseband_filter_bw = false;
 uint32_t baseband_filter_bw_hz = 0;
+
+bool repeat = false;
 
 int rx_callback(hackrf_transfer* transfer) {
 	size_t bytes_to_write;
@@ -392,13 +387,20 @@ int tx_callback(hackrf_transfer* transfer) {
 		bytes_read = fread(transfer->buffer, 1, bytes_to_read, fd);
 		if ((bytes_read != bytes_to_read)
 				|| (limit_num_samples && (bytes_to_xfer == 0))) {
-			return -1;
+                       if (repeat) {
+                               printf("Input file end reached. Rewind to beginning.\n");
+                               rewind(fd);
+                               fread(transfer->buffer + bytes_read, 1, bytes_to_read - bytes_read, fd);
+			       return 0;
+                       } else {
+                               return -1; // not loopback mode, EOF
+                       }
+
 		} else {
 			return 0;
 		}
 	} else if (transceiver_mode == TRANSCEIVER_MODE_SS) {
-		/* Transmit SINE signal with specific powerlevel */
-		ssize_t bytes_read;
+		/* Transmit continuous wave with specific amplitude */
 		byte_count += transfer->valid_length;
 		bytes_to_read = transfer->valid_length;
 		if (limit_num_samples) {
@@ -409,7 +411,7 @@ int tx_callback(hackrf_transfer* transfer) {
 		}
 
 		for(i = 0;i<bytes_to_read;i++)
-			transfer->buffer[i] = power_level;
+			transfer->buffer[i] = amplitude;
 
 		if (limit_num_samples && (bytes_to_xfer == 0)) {
 			return -1;
@@ -423,6 +425,7 @@ int tx_callback(hackrf_transfer* transfer) {
 
 static void usage() {
 	printf("Usage:\n");
+	printf("\t[-d serial_number] # Serial number of desired HackRF.\n");
 	printf("\t-r <filename> # Receive data into file.\n");
 	printf("\t-t <filename> # Transmit data from file.\n");
 	printf("\t-w # Receive data into file with WAV header and automatic name.\n");
@@ -445,7 +448,8 @@ static void usage() {
 	printf("\t[-s sample_rate_hz] # Sample rate in Hz (8/10/12.5/16/20MHz, default %sMHz).\n",
 		u64toa((DEFAULT_SAMPLE_RATE_HZ/FREQ_ONE_MHZ),&ascii_u64_data1));
 	printf("\t[-n num_samples] # Number of samples to transfer (default is unlimited).\n");
-	printf("\t[-c power_level] # Signal source mode, power level, 0-255, dc value to DAC (default is 1).\n");
+	printf("\t[-c amplitude] # CW signal source mode, amplitude 0-127 (DC value to DAC).\n");
+        printf("\t[-R] # Repeat TX mode (default is off) \n");
 	printf("\t[-b baseband_filter_bw_hz] # Set baseband filter bandwidth in MHz.\n\tPossible values: 1.75/2.5/3.5/5/5.5/6/7/8/9/10/12/14/15/20/24/28MHz, default < sample_rate_hz.\n" );
 }
 
@@ -478,6 +482,7 @@ int main(int argc, char** argv) {
 	char path_file[PATH_FILE_MAX_LEN];
 	char date_time[DATE_TIME_MAX_LEN];
 	const char* path = NULL;
+	const char* serial_number = NULL;
 	int result;
 	time_t rawtime;
 	struct tm * timeinfo;
@@ -487,7 +492,7 @@ int main(int argc, char** argv) {
 	float time_diff;
 	unsigned int lna_gain=8, vga_gain=20, txvga_gain=0;
   
-	while( (opt = getopt(argc, argv, "wr:t:f:i:o:m:a:p:s:n:b:l:g:x:z:")) != EOF )
+	while( (opt = getopt(argc, argv, "wr:t:f:i:o:m:a:p:s:n:b:l:g:x:c:d:R")) != EOF )
 	{
 		result = HACKRF_SUCCESS;
 		switch( opt ) 
@@ -504,6 +509,10 @@ int main(int argc, char** argv) {
 		case 't':
 			transmit = true;
 			path = optarg;
+			break;
+
+		case 'd':
+			serial_number = optarg;
 			break;
 
 		case 'f':
@@ -567,8 +576,12 @@ int main(int argc, char** argv) {
 		case 'c':
 			transmit = true;
 			signalsource = true;
-			result = parse_u32(optarg, &power_level);
+			result = parse_u32(optarg, &amplitude);
 			break;
+
+                case 'R':
+                        repeat = true;
+                        break;
 
 		default:
 			printf("unknown argument '-%c %s'\n", opt, optarg);
@@ -582,6 +595,12 @@ int main(int argc, char** argv) {
 			return EXIT_FAILURE;
 		}		
 	}
+
+	if (lna_gain % 8)
+		printf("warning: lna_gain (-l) must be a multiple of 8\n");
+
+	if (vga_gain % 2)
+		printf("warning: vga_gain (-g) must be a multiple of 2\n");
 
 	if (samples_to_xfer >= SAMPLES_TO_XFER_MAX) {
 		printf("argument error: num_samples must be less than %s/%sMio\n",
@@ -742,8 +761,8 @@ int main(int argc, char** argv) {
 
 	if (signalsource) {
 		transceiver_mode = TRANSCEIVER_MODE_SS;
-		if (power_level >255) {
-			printf("argument error: power level shall be in between 0 and 255.\n");
+		if (amplitude >127) {
+			printf("argument error: amplitude shall be in between 0 and 128.\n");
 			usage();
 			return EXIT_FAILURE;
 		}
@@ -777,7 +796,7 @@ int main(int argc, char** argv) {
 		return EXIT_FAILURE;
 	}
 	
-	result = hackrf_open(&device);
+	result = hackrf_open_by_serial(serial_number, &device);
 	if( result != HACKRF_SUCCESS ) {
 		printf("hackrf_open() failed: %s (%d)\n", hackrf_error_name(result), result);
 		usage();
@@ -986,7 +1005,7 @@ int main(int argc, char** argv) {
 			/* Get size of file */
 			file_pos = ftell(fd);
 			/* Update Wav Header */
-			wave_file_hdr.hdr.size = file_pos+8;
+			wave_file_hdr.hdr.size = file_pos-8;
 			wave_file_hdr.fmt_chunk.dwSamplesPerSec = sample_rate_hz;
 			wave_file_hdr.fmt_chunk.dwAvgBytesPerSec = wave_file_hdr.fmt_chunk.dwSamplesPerSec*2;
 			wave_file_hdr.data_chunk.chunkSize = file_pos - sizeof(t_wav_file_hdr);

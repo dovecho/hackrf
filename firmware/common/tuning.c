@@ -24,6 +24,7 @@
 
 #include <rffc5071.h>
 #include <max2837.h>
+#include <sgpio.h>
 
 #define FREQ_ONE_MHZ     (1000*1000)
 
@@ -66,16 +67,20 @@ bool set_freq(const uint64_t freq)
 	if(freq_mhz < MAX_LP_FREQ_MHZ)
 	{
 		rf_path_set_filter(RF_PATH_FILTER_LOW_PASS);
-		RFFC5071_freq_mhz = (max2837_freq_nominal_hz / FREQ_ONE_MHZ) - freq_mhz;
+		/* IF is graduated from 2650 MHz to 2343 MHz */
+		max2837_freq_nominal_hz = 2650000000 - (freq / 7);
+		RFFC5071_freq_mhz = (max2837_freq_nominal_hz / FREQ_ONE_MHZ) + freq_mhz;
 		/* Set Freq and read real freq */
 		real_RFFC5071_freq_hz = rffc5071_set_frequency(RFFC5071_freq_mhz);
-		max2837_set_frequency(freq + real_RFFC5071_freq_hz);
+		max2837_set_frequency(real_RFFC5071_freq_hz - freq);
+		sgpio_cpld_stream_rx_set_q_invert(1);
 	}else if( (freq_mhz >= MIN_BYPASS_FREQ_MHZ) && (freq_mhz < MAX_BYPASS_FREQ_MHZ) )
 	{
 		rf_path_set_filter(RF_PATH_FILTER_BYPASS);
 		MAX2837_freq_hz = (freq_mhz * FREQ_ONE_MHZ) + freq_hz;
 		/* RFFC5071_freq_mhz <= not used in Bypass mode */
 		max2837_set_frequency(MAX2837_freq_hz);
+		sgpio_cpld_stream_rx_set_q_invert(0);
 	}else if(  (freq_mhz >= MIN_HP_FREQ_MHZ) && (freq_mhz <= MAX_HP_FREQ_MHZ) )
 	{
 		if (freq_mhz < MID1_HP_FREQ_MHZ) {
@@ -93,6 +98,7 @@ bool set_freq(const uint64_t freq)
 		/* Set Freq and read real freq */
 		real_RFFC5071_freq_hz = rffc5071_set_frequency(RFFC5071_freq_mhz);
 		max2837_set_frequency(freq - real_RFFC5071_freq_hz);
+		sgpio_cpld_stream_rx_set_q_invert(0);
 	}else
 	{
 		/* Error freq_mhz too high */
@@ -114,7 +120,7 @@ bool set_freq_explicit(const uint64_t if_freq_hz, const uint64_t lo_freq_hz,
 	}
 
 	if ((path != RF_PATH_FILTER_BYPASS) &&
-			(lo_freq_hz < MIN_LO_FREQ_HZ) || (lo_freq_hz > MAX_LO_FREQ_HZ)) {
+			((lo_freq_hz < MIN_LO_FREQ_HZ) || (lo_freq_hz > MAX_LO_FREQ_HZ))) {
 		return false;
 	}
 
@@ -124,6 +130,11 @@ bool set_freq_explicit(const uint64_t if_freq_hz, const uint64_t lo_freq_hz,
 
 	rf_path_set_filter(path);
 	max2837_set_frequency(if_freq_hz);
+	if (lo_freq_hz > if_freq_hz) {
+		sgpio_cpld_stream_rx_set_q_invert(1);
+	} else {
+		sgpio_cpld_stream_rx_set_q_invert(0);
+	}
 	if (path != RF_PATH_FILTER_BYPASS) {
 		(void)rffc5071_set_frequency(lo_freq_hz / FREQ_ONE_MHZ);
 	}

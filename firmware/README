@@ -22,9 +22,21 @@ $ cd firmware/libopencm3
 $ make
 
 
+To build and install a standard firmware image for HackRF One:
+
+$ cd hackrf_usb
+$ mkdir build
+$ cd build
+$ cmake .. -DBOARD=HACKRF_ONE
+$ make
+$ hackrf_spiflash -w hackrf_usb.bin
+
+If you have a Jawbreaker, use -DBOARD=JAWBREAKER instead.
+
+
 For loading firmware into RAM with DFU you will also need:
 
-git://git.openezx.org/dfu-util.git
+http://dfu-util.gnumonks.org/
 
 To start up HackRF One in DFU mode, hold down the DFU button while powering it
 on or while pressing and releasing the RESET button.  Release the DFU button
@@ -34,4 +46,11 @@ With dfu-util and dfu-suffix (from the dfu-util package) installed and with the
 HackRF operating in DFU mode, you can build firmware for RAM and load it with:
 
 $ cd hackrf_usb
-$ make -e BOARD=HACKRF_ONE RUN_FROM=RAM program
+$ mkdir build
+$ cd build
+$ cmake .. -DRUN_FROM=RAM
+$ make hackrf_usb-program
+
+Alternatively you can load a .dfu file from a release package with:
+
+$ dfu-util --device 1fc9:000c --alt 0 --download hackrf_usb_ram.dfu

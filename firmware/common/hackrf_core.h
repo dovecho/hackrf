@@ -67,8 +67,10 @@ extern "C"
 #define SCU_PINMUX_BOOT3    (P2_9)  /* GPIO1[10] on P2_9 */
 
 /* USB peripheral */
+#if (defined JELLYBEAN || defined JAWBREAKER)
 #define SCU_PINMUX_USB_LED0 (P6_8)
 #define SCU_PINMUX_USB_LED1 (P6_7)
+#endif
 
 /* SSP1 Peripheral PinMux */
 #define SCU_SSP1_MISO       (P1_3)  /* P1_3 */
@@ -343,7 +345,9 @@ extern "C"
 typedef enum {
 	TRANSCEIVER_MODE_OFF = 0,
 	TRANSCEIVER_MODE_RX = 1,
-	TRANSCEIVER_MODE_TX = 2
+	TRANSCEIVER_MODE_TX = 2,
+	TRANSCEIVER_MODE_SS = 3,
+	TRANSCEIVER_MODE_CPLD_UPDATE = 4
 } transceiver_mode_t;
 
 void delay(uint32_t duration);
